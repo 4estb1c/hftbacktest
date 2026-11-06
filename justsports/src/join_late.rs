@@ -154,9 +154,11 @@ impl JoinLate {
                 (Some(Reverse((at, _, _))), _) => *at - now,
                 (None, _) => 3_600_000_000_000,
             };
-            match hbt.wait_next_feed(true, timeout)? {
-                ElapseResult::EndOfData => break,
-                _ => {}
+            if let ElapseResult::EndOfData = hbt.wait_next_feed(true, timeout)? {
+                // the last step can carry order responses, such as a fill on the final trade
+                let now = hbt.current_timestamp();
+                self.responses(hbt, now)?;
+                break;
             }
             let now = hbt.current_timestamp();
             self.responses(hbt, now)?;

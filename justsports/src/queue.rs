@@ -117,9 +117,12 @@ impl<MD: MarketDepth> QueueModel<MD> for JsQueue<MD> {
     fn depth(&self, order: &mut Order, prev_qty: f64, new_qty: f64, _depth: &MD) {
         let setting = self.setting;
         let q = pos(order);
-        let traded = q.cum_trade;
-        q.cum_trade = 0.0;
-        let cancelled = prev_qty - new_qty - traded;
+        // A drop first spends trade quantity not yet seen in the book; only the rest is cancels.
+        // An increase spends none, so a later decrement still pairs with its trade.
+        let drop = prev_qty - new_qty;
+        let traded = q.cum_trade.min(drop.max(0.0));
+        q.cum_trade -= traded;
+        let cancelled = drop - traded;
         if cancelled > 0.0 {
             match setting {
                 Setting::Front | Setting::BackTrades => {}
