@@ -1,0 +1,21 @@
+[package]
+name = "justsports"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "JustSports adapter for hftbacktest: prediction-market fees, our queue rules, and the join-late study."
+publish = false
+
+[dependencies]
+hftbacktest = { path = "../hftbacktest", default-features = false, features = ["backtest"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+
+# A workspace of its own, so the upstream workspace file stays unchanged.
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

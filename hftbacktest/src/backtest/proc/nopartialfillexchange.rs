@@ -28,6 +28,7 @@ use crate::{
         EXCH_EVENT,
         EXCH_SELL_TRADE_EVENT,
         Event,
+        GAP_EVENT,
         Order,
         OrderId,
         Side,
@@ -82,6 +83,9 @@ where
     queue_model: QM,
 
     filled_orders: Vec<OrderId>,
+
+    // Inside a recording gap (`GAP_EVENT`) until the next non-gap depth clear.
+    in_gap: bool,
 }
 
 impl<AT, LM, QM, MD, FM> NoPartialFillExchange<AT, LM, QM, MD, FM>
@@ -108,7 +112,20 @@ where
             state,
             queue_model,
             filled_orders: Default::default(),
+            in_gap: false,
         }
+    }
+
+    /// Expires every resting order: a recording gap loses the evidence of what happened to them.
+    fn expire_resting(&mut self, timestamp: i64) {
+        let mut orders = self.orders.borrow_mut();
+        for (_, mut order) in orders.drain() {
+            order.status = Status::Expired;
+            order.exch_timestamp = timestamp;
+            self.order_e2l.respond(order);
+        }
+        self.buy_orders.clear();
+        self.sell_orders.clear();
     }
 
     fn check_if_sell_filled(
@@ -314,6 +331,12 @@ where
     fn ack_new(&mut self, order: &mut Order, timestamp: i64) -> Result<(), BacktestError> {
         if self.orders.borrow().contains_key(&order.order_id) {
             return Err(BacktestError::OrderIdExist);
+        }
+
+        if self.in_gap {
+            order.status = Status::Expired;
+            order.exch_timestamp = timestamp;
+            return Ok(());
         }
 
         if order.side == Side::Buy {
@@ -527,6 +550,16 @@ where
     }
 
     fn process(&mut self, event: &Event) -> Result<(), BacktestError> {
+        if event.is(EXCH_DEPTH_CLEAR_EVENT | GAP_EVENT) {
+            self.depth.clear_depth(Side::None, 0.0);
+            self.expire_resting(event.exch_ts);
+            self.in_gap = true;
+            return Ok(());
+        } else if self.in_gap && event.is(EXCH_DEPTH_CLEAR_EVENT) {
+            self.in_gap = false;
+        } else if self.in_gap {
+            return Ok(());
+        }
         if event.is(EXCH_BID_DEPTH_CLEAR_EVENT) {
             self.depth.clear_depth(Side::Buy, event.px);
         } else if event.is(EXCH_ASK_DEPTH_CLEAR_EVENT) {

@@ -154,6 +154,13 @@ pub const BUY_EVENT: u64 = 1 << 29;
 /// event, it means that the trade initiator is a seller.
 pub const SELL_EVENT: u64 = 1 << 28;
 
+/// Marks a recording gap: the feed lost messages, so the book is unknown until the next depth
+/// clear that is not a gap starts a fresh snapshot. Combine it with [`EXCH_DEPTH_CLEAR_EVENT`]
+/// (and [`LOCAL_EVENT`]). [`NoPartialFillExchange`](crate::backtest::proc::NoPartialFillExchange)
+/// expires every resting order at a gap and every order that arrives inside one, so a backtest
+/// never asserts fills it has no evidence for.
+pub const GAP_EVENT: u64 = 1 << 27;
+
 /// Indicates that the market depth is changed.
 pub const DEPTH_EVENT: u64 = 1;
 

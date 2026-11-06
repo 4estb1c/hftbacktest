@@ -1,0 +1,4 @@
+# The PC builds for x86_64-pc-windows-gnu without MinGW binutils, so getrandom's default
+# raw-dylib backend cannot link. The legacy backend (RtlGenRandom) needs no import library.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["--cfg", 'getrandom_backend="windows_legacy"']
