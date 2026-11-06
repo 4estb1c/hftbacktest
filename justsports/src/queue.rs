@@ -153,3 +153,80 @@ impl<MD: MarketDepth> QueueModel<MD> for JsQueue<MD> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use hftbacktest::{
+        depth::{HashMapMarketDepth, L2MarketDepth},
+        types::{OrdType, TimeInForce},
+    };
+
+    use super::*;
+
+    // a bid of one contract at 0.40 joining a level of 10
+    fn setup(setting: Setting) -> (JsQueue<HashMapMarketDepth>, HashMapMarketDepth, Order) {
+        let mut depth = HashMapMarketDepth::new(0.0001, 1e-6);
+        depth.update_bid_depth(0.40, 10.0, 0);
+        let mut order = Order::new(1, 4000, 0.0001, 1.0, Side::Buy, OrdType::Limit, TimeInForce::GTC);
+        let joined: Joined = Default::default();
+        let queue = JsQueue::new(setting, joined.clone());
+        queue.new_order(&mut order, &depth);
+        assert_eq!(joined.lock().unwrap()[&1], if setting == Setting::Front { 0.0 } else { 10.0 });
+        (queue, depth, order)
+    }
+
+    fn front(order: &mut Order) -> f64 {
+        pos(order).front
+    }
+
+    #[test]
+    fn a_trade_and_its_drop_count_once() {
+        for setting in [Setting::BackProportional, Setting::BackOptimistic] {
+            let (q, depth, mut o) = setup(setting);
+            q.trade(&mut o, 3.0, &depth);
+            q.depth(&mut o, 10.0, 7.0, &depth); // the drop the trade caused: no cancels
+            assert_eq!(front(&mut o), 7.0, "{setting:?}");
+        }
+    }
+
+    #[test]
+    fn an_increase_keeps_the_trade_for_its_drop() {
+        let (q, depth, mut o) = setup(Setting::BackOptimistic);
+        q.trade(&mut o, 3.0, &depth);
+        q.depth(&mut o, 10.0, 12.0, &depth); // someone joins behind before the decrement
+        q.depth(&mut o, 12.0, 9.0, &depth); // the trade's decrement
+        assert_eq!(front(&mut o), 7.0);
+    }
+
+    #[test]
+    fn cancels_by_setting() {
+        // 4 contracts cancelled at a level of 10, all ahead of us at join
+        let cases = [
+            (Setting::BackTrades, 10.0),       // cancels sit behind us, no cap
+            (Setting::BackProportional, 6.0),  // 4 * 10 / 10 ahead
+            (Setting::BackOptimistic, 6.0),    // all 4 ahead
+        ];
+        for (setting, want) in cases {
+            let (q, depth, mut o) = setup(setting);
+            q.depth(&mut o, 10.0, 6.0, &depth);
+            assert_eq!(front(&mut o), want, "{setting:?}");
+        }
+        // proportional splits by the share ahead: 10 ahead of a level of 20, 4 cancelled
+        let (q, depth, mut o) = setup(Setting::BackProportional);
+        q.depth(&mut o, 10.0, 20.0, &depth);
+        q.depth(&mut o, 20.0, 16.0, &depth);
+        assert_eq!(front(&mut o), 8.0);
+    }
+
+    #[test]
+    fn trades_fill_only_past_the_queue() {
+        let (q, depth, mut o) = setup(Setting::BackTrades);
+        q.trade(&mut o, 10.0, &depth);
+        assert_eq!(q.is_filled(&mut o, &depth), 0.0);
+        q.trade(&mut o, 1.0, &depth);
+        assert!(q.is_filled(&mut o, &depth) > 0.0);
+        let (q, depth, mut o) = setup(Setting::Front);
+        q.trade(&mut o, 1.0, &depth);
+        assert!(q.is_filled(&mut o, &depth) > 0.0);
+    }
+}
